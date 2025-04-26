@@ -1,7 +1,7 @@
 {
   "name": "cheney-ai-shell",
   "description": "A CLI that converts natural language to shell commands.",
-  "version": "1.0.16",
+  "version": "1.0.17",
   "type": "module",
   "dependencies": {
     "@clack/core": "latest",
