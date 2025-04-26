@@ -1,5 +1,5 @@
 {
-  "name": "@cheney.yan/ai-shell",
+  "name": "cheney-ai-shell",
   "description": "A CLI that converts natural language to shell commands.",
   "version": "1.0.16",
   "type": "module",
