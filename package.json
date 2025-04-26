@@ -20,7 +20,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/BuilderIO/ai-shell"
+    "url": "https://github.com/cheney-yan/ai-shell"
   },
   "files": [
     "dist"
@@ -35,6 +35,8 @@
     "lint": "prettier --check . && eslint",
     "typecheck": "tsc",
     "build": "pkgroll",
+    "prepare": "npm run build",
+    "postinstall": "echo '\n🎉 ai-shell installed! Run \"ai help\" to get started.\n'",
     "release:patch": "npm run build && npm version patch && npm run build && npm publish && git push --follow-tags"
   },
   "devDependencies": {
