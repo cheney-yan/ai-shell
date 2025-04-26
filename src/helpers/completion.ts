@@ -207,7 +207,7 @@ export const readData =
       let content = '';
       let dataStart = false;
       let buffer = ''; // This buffer will temporarily hold incoming data only for detecting the start
-      let showedCtrlCMessage = false;
+
 
       const [excludedPrefix] = excluded;
       const stopTextStreamKeys = ['q', 'escape']; //Group of keys that stop the text stream
@@ -247,10 +247,7 @@ export const readData =
       });
 
       // Show a message that the user can press Ctrl+C to stop the analysis
-      if (options?.isAnalysis && !showedCtrlCMessage) {
-        writer('\n' + yellow(i18n.t('Press Ctrl+C to stop analysis')) + '\n\n');
-        showedCtrlCMessage = true;
-      }
+
       // Cleanup function to restore original handlers
       const cleanup = () => {
         if (options?.isAnalysis) {
