@@ -1,10 +1,11 @@
 import * as p from '@clack/prompts';
 import { execaCommand } from 'execa';
-import { cyan, dim } from 'kolorist';
+import { cyan, dim, red, yellow } from 'kolorist';
 import {
   getExplanation,
   getRevision,
   getScriptAndInfo,
+  getCommandAnalysis,
 } from './helpers/completion';
 import { getConfig } from './helpers/config';
 import { projectName } from './helpers/constants';
@@ -12,6 +13,11 @@ import { KnownError } from './helpers/error';
 import clipboardy from 'clipboardy';
 import i18n from './helpers/i18n';
 import { appendToShellHistory } from './helpers/shell-history';
+import {
+  CommandResult,
+  addToCommandHistory,
+  formatCommandHistoryForAI
+} from './helpers/command-history';
 
 const init = async () => {
   try {
@@ -36,17 +42,93 @@ const sample = <T>(arr: T[]): T | undefined => {
   return len ? arr[Math.floor(Math.random() * len)] : undefined;
 };
 
-async function runScript(script: string) {
+async function runScript(script: string, key?: string, model?: string, apiEndpoint?: string, originalPrompt?: string) {
   p.outro(`${i18n.t('Running')}: ${script}`);
   console.log('');
+
   try {
-    await execaCommand(script, {
-      stdio: 'inherit',
+    // Execute command with pipe instead of inherit to capture output
+    const result = await execaCommand(script, {
+      stdio: 'pipe',
       shell: process.env.SHELL || true,
+      reject: false, // Don't throw on non-zero exit code
     });
+
+    // Print the output to console
+    if (result.stdout) {
+      process.stdout.write(result.stdout);
+      if (!result.stdout.endsWith('\n')) {
+        console.log('');
+      }
+    }
+
+    if (result.stderr) {
+      process.stderr.write(result.stderr);
+      if (!result.stderr.endsWith('\n')) {
+        console.log('');
+      }
+    }
+
+    // Store command in history
+    const commandResult: CommandResult = {
+      command: script,
+      exitCode: result.exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      timestamp: Date.now()
+    };
+
+    addToCommandHistory(commandResult);
     appendToShellHistory(script);
-  } catch (error) {
-    // Nothing needed, it'll output to stderr
+
+    // If command failed and we have API credentials, analyze the failure
+    if (result.exitCode !== 0 && key && apiEndpoint) {
+      await analyzeFailedCommand(commandResult, key, apiEndpoint, model, originalPrompt);
+    }
+
+    return result.exitCode;
+  } catch (error: any) {
+    // This should only happen for errors in executing the command itself, not command failures
+    console.error(`\n${red('✖')} ${error.message}`);
+    return 1;
+  }
+}
+
+/**
+ * Analyze a failed command using AI and provide suggestions
+ */
+async function analyzeFailedCommand(
+  commandResult: CommandResult,
+  key: string,
+  apiEndpoint: string,
+  model?: string,
+  originalPrompt?: string
+) {
+  console.log('');
+  console.log(yellow('Command failed with exit code ' + commandResult.exitCode));
+
+  const spin = p.spinner();
+  spin.start(i18n.t('Analyzing error...'));
+
+  try {
+    const commandHistory = formatCommandHistoryForAI();
+    const { readAnalysis } = await getCommandAnalysis({
+      commandResult,
+      commandHistory,
+      key,
+      apiEndpoint,
+      model,
+      originalPrompt,
+    });
+
+    spin.stop(yellow(i18n.t('Error analysis:')));
+    console.log('');
+    await readAnalysis(process.stdout.write.bind(process.stdout));
+    console.log('');
+    console.log('');
+  } catch (error: any) {
+    spin.stop(red(i18n.t('Error analysis failed')));
+    console.error(`\n${red('✖')} ${error.message}`);
   }
 }
 
@@ -115,11 +197,13 @@ export async function prompt({
   const thePrompt = usePrompt || (await getPrompt());
   const spin = p.spinner();
   spin.start(i18n.t(`Loading...`));
+  const commandHistory = formatCommandHistoryForAI();
   const { readInfo, readScript } = await getScriptAndInfo({
     prompt: thePrompt,
     key,
     model,
     apiEndpoint,
+    commandHistory,
   });
   spin.stop(`${i18n.t('Your script')}:`);
   console.log('');
@@ -146,7 +230,7 @@ export async function prompt({
     }
   }
 
-  await runOrReviseFlow(script, key, model, apiEndpoint, silentMode);
+  await runOrReviseFlow(script, key, model, apiEndpoint, silentMode, thePrompt);
 }
 
 async function runOrReviseFlow(
@@ -154,7 +238,8 @@ async function runOrReviseFlow(
   key: string,
   model: string,
   apiEndpoint: string,
-  silentMode?: boolean
+  silentMode?: boolean,
+  originalPrompt?: string
 ) {
   const emptyScript = script.trim() === '';
 
@@ -170,7 +255,7 @@ async function runOrReviseFlow(
               label: '✅ ' + i18n.t('Yes'),
               hint: i18n.t('Lets go!'),
               value: async () => {
-                await runScript(script);
+                await runScript(script, key, model, apiEndpoint, originalPrompt);
               },
             },
             {
@@ -182,7 +267,7 @@ async function runOrReviseFlow(
                   initialValue: script,
                 });
                 if (!p.isCancel(newScript)) {
-                  await runScript(newScript);
+                  await runScript(newScript, key, model, apiEndpoint, originalPrompt);
                 }
               },
             },
@@ -191,7 +276,7 @@ async function runOrReviseFlow(
         label: '🔁 ' + i18n.t('Revise'),
         hint: i18n.t('Give feedback via prompt and get a new result'),
         value: async () => {
-          await revisionFlow(script, key, model, apiEndpoint, silentMode);
+          await revisionFlow(script, key, model, apiEndpoint, silentMode, originalPrompt);
         },
       },
       {
@@ -223,7 +308,8 @@ async function revisionFlow(
   key: string,
   model: string,
   apiEndpoint: string,
-  silentMode?: boolean
+  silentMode?: boolean,
+  originalPrompt?: string
 ) {
   const revision = await promptForRevision();
   const spin = p.spinner();
@@ -261,7 +347,7 @@ async function revisionFlow(
     console.log(dim('•'));
   }
 
-  await runOrReviseFlow(script, key, model, apiEndpoint, silentMode);
+  await runOrReviseFlow(script, key, model, apiEndpoint, silentMode, originalPrompt);
 }
 
 export const parseAssert = (name: string, condition: any, message: string) => {

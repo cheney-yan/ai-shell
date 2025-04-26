@@ -26,18 +26,24 @@ cli(
     },
     commands: [config, chat, update],
   },
-  (argv) => {
+  async (argv) => {
     const silentMode = argv.flags.silent;
-    const promptText = argv._.join(' ');
+    let promptText = argv._.join(' ');
 
     if (promptText.trim() === 'update') {
       update.callback?.(argv);
     } else {
-      prompt({ usePrompt: promptText, silentMode }).catch((error) => {
-        console.error(`\n${red('✖')} ${error.message}`);
-        handleCliError(error);
-        process.exit(1);
-      });
+      while (true) {
+        try {
+          await prompt({ usePrompt: promptText, silentMode });
+          // Clear promptText after first iteration so subsequent loops wait for user input
+          promptText = '';
+        } catch (error) {
+          console.error(`\n${red('✖')} ${error.message}`);
+          handleCliError(error);
+          // Don't exit on error, continue the shell session
+        }
+      }
     }
   }
 );
